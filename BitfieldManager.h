@@ -12,6 +12,13 @@ public:
     BitfieldManager();
     explicit BitfieldManager(size_t numPieces, bool has);
 
+    std::vector<bool> getBits(){
+        return bits;
+    }
+    size_t getSize(){
+        return size;
+    }
+
     void setPiece(size_t index);
     void clearPiece(size_t index);
     bool hasPiece(size_t index) const;
@@ -19,6 +26,7 @@ public:
     void setAllPieces();
     void clearAllPieces();
     bool isComplete() const;
+
 
     std::vector<uint8_t> toBytes() const;
     static BitfieldManager toBits(const std::vector<uint8_t>& data, size_t numPieces);

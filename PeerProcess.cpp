@@ -1,5 +1,7 @@
 #include "PeerProcess.h"
-#include "messageSender.h"
+
+// TODO: finish the handling stuff
+// TODO: Implement the choosing neighbors stuff
 
 // initiate with the peer id
 PeerProcess::PeerProcess(int peerId) {
@@ -156,7 +158,6 @@ void PeerProcess::startListen() {
 
 // handle the connection process, validate handshake
 void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
-
     // confirm handshake size
     unsigned char handshake[32];
     int received = recv(clientSocket, (char*)handshake, 32, MSG_WAITALL);
@@ -182,8 +183,19 @@ void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
 
     // if didnt send first handshake, send handshake second
     if(receiver) {
-        // TODO: send handshake from messageSender
+        MessageSender sender(otherPeerId, clientSocket);
+        sender.sendHandshake();
     }
+
+    // after connecting and verifying handshake, send bitfield
+    MessageSender sender(otherPeerId, clientSocket);
+    sender.sendBitfield(bitfield.getBits());
+
+    // null bitfield as placeholder till their bitfield is recieved, if its not then they have nothing anyway
+    BitfieldManager nullBitfield(bitfield.getSize(), false);
+    PeerRelationship newPeer(clientSocket, nullBitfield, false, false, false, false);
+    // add them to the relationships list of connected peers
+    relationships.emplace(otherPeerId, newPeer);
 
     // handle the rest of the message
     std::thread(&PeerProcess::connectionMessageLoop, this, clientSocket, otherPeerId).detach();
@@ -225,11 +237,8 @@ void PeerProcess::connectToEarlierPeers() {
             freeaddrinfo(result);
             continue;
         }
-
-        // once connected preform handshake
         freeaddrinfo(result);
         std::cout << "Peer " << ID << " connected to Peer " << peer.peerId << std::endl;
-        // TODO: send handshake from messageSender
 
         // handle connection with new peer
         std::thread(&PeerProcess::handleConnection, this, sock, false).detach();
@@ -249,15 +258,15 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
         }
 
         // if message is just a keep-alive message
-        uint32_t msgLen = ntohl(netLen);
-        if (msgLen == 0) {
+        uint32_t messageLen = ntohl(netLen);
+        if (messageLen == 0) {
             std::cout << "Peer " << ID << " received KEEP-ALIVE from peer " << remotePeerId << std::endl;
             continue;
         }
 
         // next byte is message type
-        unsigned char msgType;
-        r = recv(sock, (char *) &msgType, 1, MSG_WAITALL);
+        unsigned char messageType;
+        r = recv(sock, (char *) &messageType, 1, MSG_WAITALL);
         if (r <= 0) {
             std::cout << "Peer " << ID << " lost connection to peer " << remotePeerId << std::endl;
             closesocket(sock);
@@ -266,9 +275,9 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
 
         // next part is the actual message msglen bytes
         std::vector<unsigned char> payload;
-        if (msgLen > 1) {
-            payload.resize(msgLen - 1);
-            r = recv(sock, (char *) payload.data(), msgLen - 1, MSG_WAITALL);
+        if (messageLen > 1) {
+            payload.resize(messageLen - 1);
+            r = recv(sock, (char *) payload.data(), messageLen - 1, MSG_WAITALL);
             if (r <= 0) {
                 std::cout << "Peer " << ID << " connection closed while reading payload" << std::endl;
                 closesocket(sock);
@@ -276,7 +285,7 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
             }
         }
 
-        switch (msgType) {
+        switch (messageType) {
             // choke
             case 0:
                 std::cout << "Peer " << ID << " received CHOKE from " << remotePeerId << std::endl;
@@ -334,18 +343,22 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
 }
 
 void PeerProcess::handleChoke(int peerId){
+    relationships.at(peerId).chokedMe = true;
     // TODO: stop sending requests
 }
 
 void PeerProcess::handleUnchoke(int peerId){
-    // TODO: resume sending requests
+    relationships.at(peerId).chokedMe = false;
+    // TODO: can resume sending requests
 }
 
 void PeerProcess::handleInterested(int peerId){
+    relationships.at(peerId).interestedInMe = true;
     // TODO: mark as interested
 }
 
 void PeerProcess::handleNotInterested(int peerId){
+    relationships.at(peerId).interestedInMe = false;
     // TODO: mark as not interested
 }
 
@@ -354,7 +367,8 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
 }
 
 void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& payload){
-    // TODO: change byte array into bitfield
+    relationships.at(peerId).theirBitfield = BitfieldManager::toBits(payload, payload.size());
+    // TODO: read the bitfield and see if they have pieces that I do not, if so then mark them as interested
 }
 
 void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& payload){
@@ -365,6 +379,6 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
     // TODO: update file
 }
 
-bool PeerProcess::allPeersHaveFile() {
-    return false;
+bool PeerProcess::allPeersHave() {
+    // TODO: close connection?
 }
