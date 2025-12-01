@@ -48,10 +48,18 @@ private:
     size_t getNumPieces() const;
 
     void startListen();
-    void handleIncomingConnection(SOCKET clientSocket, std::string clientIP) const;
+    void handleConnection(SOCKET clientSocket, bool receiver);
     void connectToEarlierPeers();
-    void performHandshakes();
-    void startMessageLoop();
+    void connectionMessageLoop(SOCKET sock, int remotePeerId);
+
+    void handleChoke(int peerId);
+    void handleUnchoke(int peerId);
+    void handleInterested(int peerId);
+    void handleNotInterested(int peerId);
+    void handleHave(int peerId, const std::vector<unsigned char>& payload);
+    void handleBitfield(int peerId, const std::vector<unsigned char>& payload);
+    void handleRequest(int peerId, const std::vector<unsigned char>& payload);
+    void handlePiece(int peerId, const std::vector<unsigned char>& payload);
 
     bool allPeersHaveFile();
 };

@@ -8,9 +8,14 @@ PeerProcess::PeerProcess(int peerId) {
 
 // start the peerProcess
 void PeerProcess::start() {
+    // initializers
     readCommon();
     readPeerInfo();
     bitfieldInit();
+
+    // start peer processes
+    startListen();
+    connectToEarlierPeers();
 }
 // read the Common.cfg file and place the information in the common strut
 void PeerProcess::readCommon() {
@@ -78,6 +83,7 @@ size_t PeerProcess::getNumPieces() const {
     return (common.fileSize + common.pieceSize - 1) / common.pieceSize;
 }
 
+// start listening for connections from other peers
 void PeerProcess::startListen() {
     // start thread
     std::thread listenerThread([this]() {
@@ -125,7 +131,7 @@ void PeerProcess::startListen() {
         std::cout << "Peer " << ID << "now listening from port " << selfInfo.port << std::endl;
 
         // listening loop
-        while (true) {
+        while(true) {
             sockaddr_in clientInfo{};
             int clientInfoSize = sizeof(clientInfo);
 
@@ -137,12 +143,8 @@ void PeerProcess::startListen() {
                 continue;
             }
 
-            // get the IP
-            char clientIP[32];
-            inet_ntop(AF_INET, &(clientInfo.sin_addr), clientIP, sizeof(clientIP));
-
             // go handle the connection
-            std::thread(&PeerProcess::handleIncomingConnection, this, clientSocket, std::string(clientIP)).detach();
+            std::thread(&PeerProcess::handleConnection, this, clientSocket, true).detach();
         }
 
         closesocket(serverSocket);
@@ -152,11 +154,10 @@ void PeerProcess::startListen() {
     listenerThread.detach();
 }
 
-void PeerProcess::handleIncomingConnection(SOCKET clientSocket, std::string clientIP) const{
-    // connection accepted
-    std::cout << "Peer " << ID << " accepted connection from " << clientIP << std::endl;
+// handle the connection process, validate handshake
+void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
 
-    // confirm handshake
+    // confirm handshake size
     unsigned char handshake[32];
     int received = recv(clientSocket, (char*)handshake, 32, MSG_WAITALL);
     if (received != 32) {
@@ -166,8 +167,7 @@ void PeerProcess::handleIncomingConnection(SOCKET clientSocket, std::string clie
     }
 
     // validate header
-    const char expectedHeader[19] = "P2PFILESHARINGPROJ";
-
+    const char expectedHeader[19] = "P2PFILESHARINGPROJ"; // expected handshake header
     if (memcmp(handshake, expectedHeader, 18) != 0) {
         std::cerr << "Peer " << ID << " ERROR: Invalid header" << std::endl;
         closesocket(clientSocket);
@@ -180,21 +180,197 @@ void PeerProcess::handleIncomingConnection(SOCKET clientSocket, std::string clie
     otherPeerId = ntohl(otherPeerId);
     std::cout << "Peer " << ID << " received valid handshake from peer "<< otherPeerId << std::endl;
 
-    // send handshake back
-    // messageSender
+    // if didnt send first handshake, send handshake second
+    if(receiver) {
+        // TODO: send handshake from messageSender
+    }
+
+    // handle the rest of the message
+    std::thread(&PeerProcess::connectionMessageLoop, this, clientSocket, otherPeerId).detach();
+
 
 }
 
+// start connected to peers with a smaller ID
 void PeerProcess::connectToEarlierPeers() {
+    // look through all peers but connect with earlier peers
+    for (const auto& peer : allPeers) {
+        if (peer.peerId >= ID)
+            continue;
+        std::cout << "Peer " << ID << " attempting connection to Peer "<< peer.peerId << std::endl;
 
+        addrinfo hints{}, *result = nullptr;
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        // get host name
+        std::string portStr = std::to_string(peer.port);
+        if (getaddrinfo(peer.hostName.c_str(), portStr.c_str(), &hints, &result) != 0) {
+            std::cerr << "Peer " << ID << " ERROR: getaddrinfo failed.\n";
+            continue;
+        }
+
+        // open socket
+        SOCKET sock = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+        if (sock == INVALID_SOCKET) {
+            std::cerr << "Peer " << ID << " ERROR: socket() failed" << std::endl;
+            freeaddrinfo(result);
+            continue;
+        }
+
+        // attempt to connect to peer
+        if (connect(sock, result->ai_addr, (int)result->ai_addrlen) == SOCKET_ERROR) {
+            std::cerr << "Peer " << ID << " ERROR: connect() failed to peer " << peer.peerId << std::endl;
+            closesocket(sock);
+            freeaddrinfo(result);
+            continue;
+        }
+
+        // once connected preform handshake
+        freeaddrinfo(result);
+        std::cout << "Peer " << ID << " connected to Peer " << peer.peerId << std::endl;
+        // TODO: send handshake from messageSender
+
+        // handle connection with new peer
+        std::thread(&PeerProcess::handleConnection, this, sock, false).detach();
+    }
 }
 
-void PeerProcess::performHandshakes() {
+// keep messaging peers while the connection is open
+void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
+    while (true) {
+        // first 4 bytes: message length
+        uint32_t netLen;
+        int r = recv(sock, (char *) &netLen, sizeof(netLen), MSG_WAITALL);
+        if (r <= 0) {
+            std::cout << "Peer " << ID << " disconnected from peer " << remotePeerId << std::endl;
+            closesocket(sock);
+            return;
+        }
 
+        // if message is just a keep-alive message
+        uint32_t msgLen = ntohl(netLen);
+        if (msgLen == 0) {
+            std::cout << "Peer " << ID << " received KEEP-ALIVE from peer " << remotePeerId << std::endl;
+            continue;
+        }
+
+        // next byte is message type
+        unsigned char msgType;
+        r = recv(sock, (char *) &msgType, 1, MSG_WAITALL);
+        if (r <= 0) {
+            std::cout << "Peer " << ID << " lost connection to peer " << remotePeerId << std::endl;
+            closesocket(sock);
+            return;
+        }
+
+        // next part is the actual message msglen bytes
+        std::vector<unsigned char> payload;
+        if (msgLen > 1) {
+            payload.resize(msgLen - 1);
+            r = recv(sock, (char *) payload.data(), msgLen - 1, MSG_WAITALL);
+            if (r <= 0) {
+                std::cout << "Peer " << ID << " connection closed while reading payload" << std::endl;
+                closesocket(sock);
+                return;
+            }
+        }
+
+        switch (msgType) {
+            // choke
+            case 0:
+                std::cout << "Peer " << ID << " received CHOKE from " << remotePeerId << std::endl;
+                handleChoke(remotePeerId);
+                break;
+
+            // unchoke
+            case 1:
+                std::cout << "Peer " << ID << " received UNCHOKE from " << remotePeerId << std::endl;
+                handleUnchoke(remotePeerId);
+                break;
+
+            // interested
+            case 2:
+                std::cout << "Peer " << ID << " received INTERESTED from " << remotePeerId << std::endl;
+                handleInterested(remotePeerId);
+                break;
+
+            // not interested
+            case 3:
+                std::cout << "Peer " << ID << " received NOT INTERESTED from " << remotePeerId << std::endl;
+                handleNotInterested(remotePeerId);
+                break;
+
+            // have
+            case 4:
+                std::cout << "Peer " << ID << " received HAVE from " << remotePeerId << std::endl;
+                handleHave(remotePeerId, payload);
+                break;
+
+            // bitfield
+            case 5:
+                std::cout << "Peer " << ID << " received BITFIELD from " << remotePeerId << std::endl;
+                handleBitfield(remotePeerId, payload);
+                break;
+
+            // request
+            case 6:
+                std::cout << "Peer " << ID << " received REQUEST from " << remotePeerId << std::endl;
+                handleRequest(remotePeerId, payload);
+                break;
+
+            // piece
+            case 7:
+                std::cout << "Peer " << ID << " received PIECE from " << remotePeerId << std::endl;
+                handlePiece(remotePeerId, payload);
+                break;
+
+            // other message
+            default:
+                std::cout << "Peer " << ID << " received UNKNOWN message type from" << remotePeerId << std::endl;
+                break;
+        }
+    }
 }
 
-void PeerProcess::startMessageLoop() {
+void PeerProcess::handleChoke(int peerId)
+{
+    // TODO: stop sending requests
+}
 
+void PeerProcess::handleUnchoke(int peerId)
+{
+    // TODO: resume sending requests
+}
+
+void PeerProcess::handleInterested(int peerId)
+{
+    // TODO: mark as interested
+}
+
+void PeerProcess::handleNotInterested(int peerId)
+{
+    // TODO: mark as not interested
+}
+
+void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& payload)
+{
+    // TODO: update connected peer's bitfield
+}
+
+void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& payload)
+{
+    // TODO: change byte array into bitfield
+}
+
+void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& payload)
+{
+    // TODO: send piece
+}
+
+void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payload)
+{
+    // TODO: update file
 }
 
 bool PeerProcess::allPeersHaveFile() {
