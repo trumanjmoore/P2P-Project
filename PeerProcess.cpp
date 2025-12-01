@@ -333,43 +333,35 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
     }
 }
 
-void PeerProcess::handleChoke(int peerId)
-{
+void PeerProcess::handleChoke(int peerId){
     // TODO: stop sending requests
 }
 
-void PeerProcess::handleUnchoke(int peerId)
-{
+void PeerProcess::handleUnchoke(int peerId){
     // TODO: resume sending requests
 }
 
-void PeerProcess::handleInterested(int peerId)
-{
+void PeerProcess::handleInterested(int peerId){
     // TODO: mark as interested
 }
 
-void PeerProcess::handleNotInterested(int peerId)
-{
+void PeerProcess::handleNotInterested(int peerId){
     // TODO: mark as not interested
 }
 
-void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& payload)
-{
+void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& payload){
     // TODO: update connected peer's bitfield
 }
 
-void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& payload)
-{
+void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& payload){
     // TODO: change byte array into bitfield
 }
 
-void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& payload)
-{
+void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& payload){
     // TODO: send piece
 }
 
-void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payload)
-{
+void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payload){
     // TODO: update file
 }
 
