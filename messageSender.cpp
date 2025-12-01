@@ -50,34 +50,72 @@ void MessageSender::sendHandshake()
     sendRaw(handshake);
 }
 
+std::vector<char> MessageSender::buildMessage(uint8_t type, const std::vector<char>& payload = {})
+{
+    uint32_t length = htonl(1 + payload.size());
+    std::vector<char> message(4 + 1 + payload.size());
+
+    std::memcpy(message.data(), &length, 4);
+    message[4] = type;
+    if (!payload.empty())
+    {
+        std::memcpy(message.data() + 5, payload.data(), payload.size());
+    }
+
+    return message;
+}
+
+
 void MessageSender::sendChoke()
 {
+    sendRaw(buildMessage(0));
 }
 
 void MessageSender::sendUnchoke()
 {
+    sendRaw(buildMessage(1));
 }
 
 void MessageSender::sendInterested()
 {
+    sendRaw(buildMessage(2));
 }
 
 void MessageSender::sendNotInterested()
 {
+    sendRaw(buildMessage(3));
 }
 
 void MessageSender::sendHave(int pieceIndex)
 {
+    std::vector<char> payload = intToBytes(pieceIndex);
+    sendRaw(buildMessage(4, payload));
 }
 
 void MessageSender::sendBitfield(const std::vector<bool> &bitfield)
 {
+    size_t numBytes = (bitfield.size() + 7) / 8;
+    std::vector<char> payload(numBytes, 0);
+
+    for (size_t i = 0; i < bitfield.size(); ++i)
+    {
+        if (bitfield[i])
+        {
+            payload[i / 8] |= (1 << (7 - (i % 8)));
+        }
+    }
+    sendRaw(buildMessage(5, payload));
 }
 
 void MessageSender::sendRequest(int pieceIndex)
 {
+    std::vector<char> payload = intToBytes(pieceIndex);
+    sendRaw(buildMessage(6, payload));
 }
 
 void MessageSender::sendPiece(int pieceIndex, const std::vector<char> &pieceData)
 {
+    std::vector<char> payload = intToBytes(pieceIndex);
+    payload.insert(payload.end(), pieceData.begin(), pieceData.end());
+    sendRaw(buildMessage(7, payload));
 }
