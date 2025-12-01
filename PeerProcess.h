@@ -3,6 +3,10 @@
 #include <fstream>
 #include "BitfieldManager.h"
 #include <sstream>
+#include <thread>
+#include <unistd.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
 #pragma once
 
@@ -42,5 +46,13 @@ private:
     void readPeerInfo();
     void bitfieldInit();
     size_t getNumPieces() const;
+
+    void startListen();
+    void handleIncomingConnection(SOCKET clientSocket, std::string clientIP) const;
+    void connectToEarlierPeers();
+    void performHandshakes();
+    void startMessageLoop();
+
+    bool allPeersHaveFile();
 };
 

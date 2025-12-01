@@ -10,7 +10,7 @@ private:
 
 public:
     BitfieldManager();
-    explicit BitfieldManager(size_t numPieces);
+    explicit BitfieldManager(size_t numPieces, bool has);
 
     void setPiece(size_t index);
     void clearPiece(size_t index);
