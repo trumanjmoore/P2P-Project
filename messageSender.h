@@ -17,6 +17,7 @@ class MessageSender
 
     public:
     MessageSender(int peerID, int socket);
+    std::vector<char> buildMessage(uint8_t type, const std::vector<char>& payload = {});
 
     void sendHandshake();
 
