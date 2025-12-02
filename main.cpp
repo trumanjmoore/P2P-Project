@@ -3,12 +3,12 @@
 #include <iostream>
 
 int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        std::cerr << "PeerProcess <peerID>" << std::endl;
+    if (argc != 3) {
+        std::cerr << "peerProcess <peerID>" << std::endl;
         return 1;
     }
 
-    int myPeerId = std::stoi(argv[1]);
+    int myPeerId = std::stoi(argv[2]);
     PeerProcess mainPeer(myPeerId);
     mainPeer.start();
 }

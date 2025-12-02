@@ -26,6 +26,9 @@ void PeerProcess::start() {
 // read the Common.cfg file and place the information in the common strut
 void PeerProcess::readCommon() {
     std::ifstream commonFile("Common.cfg");
+    if (!commonFile.is_open()) {
+        std::cerr << "Failed to open Common.cfg. CWD: " << std::filesystem::current_path() << std::endl;
+    }
     std::string line;
     std::string key, value;
 
@@ -140,7 +143,7 @@ void PeerProcess::startListen() {
         }
 
         // socket is successfully listening for other peers
-        std::cout << "Peer " << ID << "now listening from port " << selfInfo.port << std::endl;
+        std::cout << "Peer " << ID << " now listening from port " << selfInfo.port << std::endl;
 
         // listening loop
         while(true) {
@@ -172,7 +175,7 @@ void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
     unsigned char handshake[32];
     int received = recv(clientSocket, (char*)handshake, 32, MSG_WAITALL);
     if (received != 32) {
-        std::cerr << "Peer " << ID << " ERROR: Invalid handshake received" << std::endl;
+        std::cerr << "Peer " << ID << " ERROR: Invalid handshake received of size " << received << std::endl;
         closesocket(clientSocket);
         return;
     }

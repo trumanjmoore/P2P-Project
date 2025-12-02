@@ -50,7 +50,7 @@ void MessageSender::sendHandshake()
     sendRaw(handshake);
 }
 
-std::vector<char> MessageSender::buildMessage(uint8_t type, const std::vector<char>& payload = {})
+std::vector<char> MessageSender::buildMessage(uint8_t type, const std::vector<char>& payload)
 {
     uint32_t length = htonl(1 + payload.size());
     std::vector<char> message(4 + 1 + payload.size());

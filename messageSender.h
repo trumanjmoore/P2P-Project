@@ -5,6 +5,8 @@
 #include <vector>
 #include <cerrno>
 #include <cstring>
+#include <winsock2.h>
+#include <cstdint>
 
 class MessageSender
 {
