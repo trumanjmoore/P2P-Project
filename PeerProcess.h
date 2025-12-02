@@ -1,3 +1,4 @@
+#pragma once
 #include <string>
 #include <vector>
 #include <fstream>
@@ -8,6 +9,10 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <filesystem>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
+#include <random>
 #include "BitfieldManager.h"
 #include "messageSender.h"
 #include "FileHandling.h"
@@ -42,6 +47,8 @@ struct PeerRelationship {
     bool chokedThem;
     bool interestedInMe;
     bool interestedInThem;
+    uint64_t bytesDownloaded = 0;
+    uint64_t lastDownloaded = 0;
 };
 
 class PeerProcess {
@@ -81,6 +88,23 @@ private:
     void handleBitfield(int peerId, const std::vector<unsigned char>& payload);
     void handleRequest(int peerId, const std::vector<unsigned char>& payload);
     void handlePiece(int peerId, const std::vector<unsigned char>& payload);
+
+    std::mutex peersMutex;
+    std::atomic<int> optimisticUnchokedPeer{-1};
+    std::thread preferredNeighborThread;
+    std::thread optimisticUnchokeThread;
+
+    std::atomic<bool> schedulerStop{false};
+    std::condition_variable_any schedulerCv;
+    std::mutex schedulerMutex;
+
+// Functions to start/stop schedulers
+    void startPreferredNeighbor();
+    void startOptimisticUnchoke();
+    void stopSchedulers(); // call on shutdown
+
+// helper to record bytes downloaded from a peer (call inside handlePiece)
+    void recordDownloadedBytes(int fromPeerId, uint64_t bytes);
 
     bool allPeersHave();
 };
