@@ -61,7 +61,6 @@ std::vector<char> MessageSender::buildMessage(uint8_t type, const std::vector<ch
     {
         std::memcpy(message.data() + 5, payload.data(), payload.size());
     }
-
     return message;
 }
 

@@ -25,7 +25,7 @@ bool BitfieldManager::hasPiece(size_t index) const {
 // check if all bits are 1: has the full file
 bool BitfieldManager::isComplete() const {
     for (int i =0; i < size; i++) {
-        if (bits[i])
+        if (!bits[i])
             return false;
     }
     return true;

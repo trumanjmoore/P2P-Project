@@ -5,14 +5,16 @@
 // initiate with the peer id
 PeerProcess::PeerProcess(int peerId) {
     ID = peerId;
-    readCommon();
-    readPeerInfo();
-    bitfieldInit();
-    fileHandlinitInit();
 }
 
 // start the peerProcess
 void PeerProcess::start() {
+    // initializers
+    readCommon();
+    readPeerInfo();
+    bitfieldInit();
+    fileHandlinitInit();
+
     // start peer processes
     startListen();
     connectToEarlierPeers();
@@ -85,7 +87,7 @@ size_t PeerProcess::getNumPieces() const {
 
 void PeerProcess::fileHandlinitInit() {
     using std::filesystem::exists;
-    fileHandler = FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 0);
+    fileHandler = new FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 0);
     fileHandler.init();
 }
 
@@ -187,13 +189,16 @@ void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
 
     // if didnt send first handshake, send handshake second
     if(receiver) {
-        MessageSender sender(otherPeerId, clientSocket);
+        MessageSender sender(ID, clientSocket);
         sender.sendHandshake();
     }
 
     // after connecting and verifying handshake, send bitfield
-    MessageSender sender(otherPeerId, clientSocket);
-    sender.sendBitfield(bitfield.getBits());
+    if (bitfield.isComplete())
+    {
+        MessageSender bitfieldSender(ID, clientSocket);
+        bitfieldSender.sendBitfield(bitfield.getBits());
+    }
 
     // null bitfield as placeholder till their bitfield is recieved, if its not then they have nothing anyway
     BitfieldManager nullBitfield(bitfield.getSize(), false);
@@ -204,8 +209,6 @@ void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
 
     // handle the rest of the message
     std::thread(&PeerProcess::connectionMessageLoop, this, clientSocket, otherPeerId).detach();
-
-
 }
 
 // start connected to peers with a smaller ID
@@ -245,6 +248,10 @@ void PeerProcess::connectToEarlierPeers() {
         freeaddrinfo(result);
         std::cout << "Peer " << ID << " connected to Peer " << peer.peerId << std::endl;
 
+        // send handshake message before handling connection
+        // this is because this process is the one initiating the connection
+        MessageSender sender(ID, sock);
+        sender.sendHandshake();
         // handle connection with new peer
         std::thread(&PeerProcess::handleConnection, this, sock, false).detach();
     }
