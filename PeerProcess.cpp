@@ -94,7 +94,7 @@ size_t PeerProcess::getNumPieces() const {
 
 void PeerProcess::fileHandlinitInit() {
     using std::filesystem::exists;
-    fileHandler = FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 0);
+    fileHandler = FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 1);
     fileHandler.init();
 }
 
@@ -238,6 +238,7 @@ void PeerProcess::connectToEarlierPeers() {
         hints.ai_socktype = SOCK_STREAM;
 
         // get host name
+	std::cout << "Peer " << ID << " resolving " << peer.hostName << ":" << peer.port << std::endl;
         std::string portStr = std::to_string(peer.port);
         if (getaddrinfo(peer.hostName.c_str(), portStr.c_str(), &hints, &result) != 0) {
             std::cerr << "Peer " << ID << " ERROR: getaddrinfo failed.\n";
@@ -322,6 +323,7 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
             case 1:
                 std::cout << "Peer " << ID << " received UNCHOKE from " << remotePeerId << std::endl;
                 handleUnchoke(remotePeerId);
+		std::cout << "test" << std::endl;
                 break;
 
             // interested
@@ -437,7 +439,7 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
 }
 
 void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& payload){
-    relationships.at(peerId).theirBitfield = BitfieldManager::toBits(payload, payload.size());
+    relationships.at(peerId).theirBitfield = BitfieldManager::toBits(payload, getNumPieces());
     // check to see if we should be interested i.e. if they have a piece that we do not
     bool interested = bitfield.compareBitfields(relationships.at(peerId).theirBitfield);
     if(interested && !relationships.at(peerId).interestedInThem){
@@ -452,54 +454,66 @@ void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& pa
     // check to see if we are choking them
     if(!relationships.at(peerId).chokedThem){
         //get the index
-        std::string str(payload.begin(), payload.begin() + 4);
         int index = (payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8)  | payload[3];
 
         std::vector<char> data;
-        // get data for the piece
-        if(fileHandler.readPiece(index).has_value()){
-            for(uint8_t byte : *fileHandler.readPiece(index))
-             data.push_back(static_cast<char>(byte));
+        
+        auto pieceDataOpt = fileHandler.readPiece(index);
+
+        if(pieceDataOpt.has_value()){
+            
+            for(uint8_t byte : *pieceDataOpt) {
+                data.push_back(static_cast<char>(byte));
+            }
         }
 
-        // send the piece to the peer
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
         sender.sendPiece(index, data);
     }
 }
 
 void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payload){
-    //get the index
-    std::string str(payload.begin(), payload.begin() + 4);
-    int index = (payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8)  | payload[3];
+    int index = (payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8) | payload[3];
+    
     std::vector<unsigned char> pieceData(payload.begin() + 4, payload.end());
 
-    // write the data to out file
     fileHandler.writePiece(index, &pieceData[0], pieceData.size());
-    // update bitfield
+    
     bitfield.setPiece(index);
-    // update the amount of bytes downlaoded from this peer
-    std::lock_guard<std::mutex> lk(peersMutex);
-    relationships.at(peerId).bytesDownloaded += payload.size()-4;
 
-    // send to all peers that we have the piece now
+    {
+        std::lock_guard<std::mutex> lk(peersMutex);
+        relationships.at(peerId).bytesDownloaded += pieceData.size(); 
+    }
+
+    int receivedCount = 0;
+    for(size_t i = 0; i < bitfield.getSize(); i++){
+        if(bitfield.hasPiece(i)) receivedCount++;
+    }
+    std::cout << "Peer " << ID << " progress: " << receivedCount << "/" << bitfield.getSize() << " pieces." << std::endl;
+
+    if (bitfield.isComplete()) {
+        std::cout << "Peer " << ID << " has downloaded the complete file!" << std::endl;
+        
+        if(fileHandler.finalize()) {
+            std::cout << "File finalized successfully." << std::endl;
+        } else {
+            std::cerr << "Failed to finalize file." << std::endl;
+        }
+    }
+    
     for (auto& [id, pr] : relationships) {
         MessageSender sender(pr.theirID, pr.theirSocket);
         sender.sendHave(index);
     }
 
-    // get the next piece we need
     int nextPiece = getPieceToRequest(peerId);
 
-    // request the piece from the peer if they haven't choked us
     if (nextPiece >= 0 && !relationships.at(peerId).chokedMe) {
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
         sender.sendRequest(nextPiece);
         requests[nextPiece] = peerId;
     }
-
-        // if we now have all the pieces
-        // use FileHandling::finalize()
 }
 
 // choosing preffered neighbors
