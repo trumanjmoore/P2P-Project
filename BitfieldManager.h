@@ -23,6 +23,8 @@ public:
     void clearPiece(size_t index);
     bool hasPiece(size_t index) const;
 
+    bool compareBitfields(const BitfieldManager& theirs);
+
     void setAllPieces();
     void clearAllPieces();
     bool isComplete() const;

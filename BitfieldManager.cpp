@@ -53,3 +53,12 @@ BitfieldManager BitfieldManager::toBits(const std::vector<uint8_t>& bytes, size_
     }
     return bitfield;
 }
+
+bool BitfieldManager::compareBitfields(const BitfieldManager& theirs) {
+    for(int i = 0; i < size; i++){
+        if(theirs.hasPiece(i) && !hasPiece(i)){
+            return true;
+        }
+    }
+    return false;
+}

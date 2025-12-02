@@ -10,4 +10,5 @@ int main(int argc, char* argv[]) {
 
     int myPeerId = std::stoi(argv[1]);
     PeerProcess mainPeer(myPeerId);
+    mainPeer.start();
 }

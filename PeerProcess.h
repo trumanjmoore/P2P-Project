@@ -7,8 +7,10 @@
 #include <unistd.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <filesystem>
 #include "BitfieldManager.h"
 #include "messageSender.h"
+#include "FileHandling.h"
 
 #pragma once
 
@@ -31,10 +33,11 @@ struct Common{
 };
 
 struct PeerRelationship {
-    PeerRelationship(SOCKET ts, BitfieldManager tb, bool cm, bool ct, bool im, bool it):
-        theirSocket(ts), theirBitfield(tb), chokedMe(cm), chokedThem(ct), interestedInMe(im), interestedInThem(it) {}
+    PeerRelationship(SOCKET ts, BitfieldManager tb, int ti, bool cm, bool ct, bool im, bool it):
+    theirSocket(ts), theirBitfield(tb), theirID(ti), chokedMe(cm), chokedThem(ct), interestedInMe(im), interestedInThem(it) {}
     SOCKET theirSocket;
     BitfieldManager theirBitfield;
+    int theirID;
     bool chokedMe;
     bool chokedThem;
     bool interestedInMe;
@@ -48,6 +51,7 @@ public:
 
     Common common;
     BitfieldManager bitfield;
+    FileHandling fileHandler;
 
 private:
     int ID;
@@ -55,16 +59,19 @@ private:
     std::vector<PeerInfo> allPeers;
     std::vector<PeerInfo> neighborPeers;
     std::unordered_map<int, PeerRelationship> relationships;
+    std::unordered_map<int, int> requests;
 
     void readCommon();
     void readPeerInfo();
     void bitfieldInit();
     size_t getNumPieces() const;
+    void fileHandlinitInit();
 
     void startListen();
     void handleConnection(SOCKET clientSocket, bool receiver);
     void connectToEarlierPeers();
     void connectionMessageLoop(SOCKET sock, int remotePeerId);
+    int getPieceToRequest(int peerId);
 
     void handleChoke(int peerId);
     void handleUnchoke(int peerId);

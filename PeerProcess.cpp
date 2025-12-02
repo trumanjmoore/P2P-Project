@@ -1,6 +1,5 @@
 #include "PeerProcess.h"
 
-// TODO: finish the handling stuff
 // TODO: Implement the choosing neighbors stuff
 
 // initiate with the peer id
@@ -14,6 +13,7 @@ void PeerProcess::start() {
     readCommon();
     readPeerInfo();
     bitfieldInit();
+    fileHandlinitInit();
 
     // start peer processes
     startListen();
@@ -83,6 +83,12 @@ void PeerProcess::bitfieldInit() {
 // get the number of pieces from the common struct pieces
 size_t PeerProcess::getNumPieces() const {
     return (common.fileSize + common.pieceSize - 1) / common.pieceSize;
+}
+
+void PeerProcess::fileHandlinitInit() {
+    using std::filesystem::exists;
+    fileHandler = new FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 0);
+    fileHandler.init();
 }
 
 // start listening for connections from other peers
@@ -193,7 +199,8 @@ void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
 
     // null bitfield as placeholder till their bitfield is recieved, if its not then they have nothing anyway
     BitfieldManager nullBitfield(bitfield.getSize(), false);
-    PeerRelationship newPeer(clientSocket, nullBitfield, false, false, false, false);
+    // choked and not interested initially
+    PeerRelationship newPeer(clientSocket, nullBitfield, otherPeerId, true, true, false, false);
     // add them to the relationships list of connected peers
     relationships.emplace(otherPeerId, newPeer);
 
@@ -342,43 +349,130 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
     }
 }
 
+int PeerProcess::getPieceToRequest(int peerId) {
+    // keep a list of candidate pieces
+    std::vector<int> candidates;
+    for (int i = 0; i < bitfield.getSize(); i++) {
+        // the other peer needs to have it and  // we need to not have it
+        if (!relationships.at(peerId).theirBitfield.hasPiece(i) || bitfield.hasPiece(i))
+            continue;
+
+        // we cant have requested it before
+        if (requests.count(i)) {
+            continue;
+        }
+
+        // add it as a candidate
+        candidates.push_back(i);
+    }
+
+    // if there's no candidates then we cant request anything from them
+    if (candidates.empty())
+        return -1;
+
+    // random selection
+    return candidates[rand()%candidates.size()];
+}
+
 void PeerProcess::handleChoke(int peerId){
     relationships.at(peerId).chokedMe = true;
-    // TODO: stop sending requests
 }
 
 void PeerProcess::handleUnchoke(int peerId){
     relationships.at(peerId).chokedMe = false;
-    // TODO: can resume sending requests
+
+    // get the next missing piece
+    int piece = getPieceToRequest(peerId);
+
+    // send a request for the missing piece
+    if (piece >= 0) {
+        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
+        sender.sendRequest( piece);
+        requests[piece] = peerId;
+        std::cout << "Peer " << ID << " requested piece " << piece << " from peer " << peerId << std::endl;
+    }
 }
 
 void PeerProcess::handleInterested(int peerId){
     relationships.at(peerId).interestedInMe = true;
-    // TODO: mark as interested
 }
 
 void PeerProcess::handleNotInterested(int peerId){
     relationships.at(peerId).interestedInMe = false;
-    // TODO: mark as not interested
 }
 
 void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& payload){
-    // TODO: update connected peer's bitfield
+    // get the index
+    std::string str(payload.begin(), payload.end());
+    int index = stoi(str);
+    // update their bitfield with the new piece
+    relationships.at(peerId).theirBitfield.setPiece(index);
+
+    // check to see if we need the piece and check to see if we are not already interested
+    if(!bitfield.hasPiece(index) && !relationships.at(peerId).interestedInThem){
+        relationships.at(peerId).interestedInThem = true;
+        // send that we are interested
+        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
+        sender.sendInterested();
+    }
 }
 
 void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& payload){
     relationships.at(peerId).theirBitfield = BitfieldManager::toBits(payload, payload.size());
-    // TODO: read the bitfield and see if they have pieces that I do not, if so then mark them as interested
+    // check to see if we should be interested i.e. if they have a piece that we do not
+    bool interested = bitfield.compareBitfields(relationships.at(peerId).theirBitfield);
+    if(interested && !relationships.at(peerId).interestedInThem){
+        // send that we are interested
+        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
+        sender.sendInterested();
+    }
+    relationships.at(peerId).interestedInThem = interested;
 }
 
 void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& payload){
-    // TODO: send piece
+    // check to see if we are choking them
+    if(!relationships.at(peerId).chokedThem){
+        //get the index
+        std::string str(payload.begin(), payload.begin() + 4);
+        int index = stoi(str);
+
+        // get data for the piece
+        std::vector<char> data = fileHandler.readPiece(index);
+
+        // send the piece to the peer
+        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
+        sender.sendPiece(index, data);
+    }
 }
 
 void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payload){
-    // TODO: update file
+    //get the index
+    std::string str(payload.begin(), payload.begin() + 4);
+    int index = stoi(str);
+
+    // write the data to out file
+    fileHandler.writePiece(index, payload, payload.size());
+
+    // update bitfield
+    bitfield.setPiece(index);
+
+    // send to all peers that we have the piece now
+    for (auto& [id, pr] : relationships) {
+        MessageSender sender(pr.theirID, pr.theirSocket);
+        sender.sendHave(index);
+    }
+
+    // get the next piece we need
+    int nextPiece = getPieceToRequest(peerId);
+
+    // request the piece from the peer if they haven't choked us
+    if (nextPiece >= 0 && !relationships.at(peerId).chokedMe) {
+        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
+        sender.sendRequest(nextPiece);
+        requests[nextPiece] = peerId;
+    }
+
+        // if we now have all the pieces
+        // use FileHandling::finalize()
 }
 
-bool PeerProcess::allPeersHave() {
-    // TODO: close connection?
-}
