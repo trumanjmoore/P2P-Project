@@ -5,16 +5,14 @@
 // initiate with the peer id
 PeerProcess::PeerProcess(int peerId) {
     ID = peerId;
-}
-
-// start the peerProcess
-void PeerProcess::start() {
-    // initializers
     readCommon();
     readPeerInfo();
     bitfieldInit();
     fileHandlinitInit();
+}
 
+// start the peerProcess
+void PeerProcess::start() {
     // start peer processes
     startListen();
     connectToEarlierPeers();
@@ -87,7 +85,7 @@ size_t PeerProcess::getNumPieces() const {
 
 void PeerProcess::fileHandlinitInit() {
     using std::filesystem::exists;
-    fileHandler = new FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 0);
+    fileHandler = FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 0);
     fileHandler.init();
 }
 

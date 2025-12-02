@@ -7,6 +7,9 @@
 
 class FileHandling {
 public:
+
+    FileHandling ();
+
     FileHandling(std::filesystem::path workDir,
                int peerId,
                std::string fileName,
@@ -37,9 +40,9 @@ public:
 private:
     std::filesystem::path workDir_, peerDir_, finalPath_, partPath_;
     std::string fileName_;
-    uint64_t fileSize_;
-    uint32_t pieceSize_;
-    bool seeder_;
+    uint64_t fileSize_{};
+    uint32_t pieceSize_{};
+    bool seeder_{};
 
     uint64_t offset(uint32_t idx) const { 
         return uint64_t(idx) * pieceSize_; 

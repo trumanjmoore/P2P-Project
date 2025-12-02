@@ -5,6 +5,8 @@ using std::filesystem::exists;
 using std::filesystem::create_directories;
 using std::filesystem::rename;
 
+FileHandling::FileHandling() = default;
+
 FileHandling::FileHandling(std::filesystem::path workDir, int peerId, std::string fileName,
                             uint64_t fileSize, uint32_t pieceSize, bool startsWithCompleteFile)
     : workDir_(std::move(workDir)),
