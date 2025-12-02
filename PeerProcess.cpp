@@ -1,6 +1,6 @@
+#include <algorithm>
+#include <unordered_set>
 #include "PeerProcess.h"
-
-// TODO: Implement the choosing neighbors stuff
 
 // initiate with the peer id
 PeerProcess::PeerProcess(int peerId) {
@@ -18,6 +18,10 @@ void PeerProcess::start() {
     // start peer processes
     startListen();
     connectToEarlierPeers();
+
+    // choose new neighbors
+    startPreferredNeighborScheduler();
+    startOptimisticUnchokeScheduler();
 }
 // read the Common.cfg file and place the information in the common strut
 void PeerProcess::readCommon() {
@@ -71,8 +75,8 @@ void PeerProcess::readPeerInfo() {
             stream >> peer.has;
             allPeers.push_back(peer);
         }
-        peerInfoFile.close();
     }
+    peerInfoFile.close();
 }
 
 // create the bitfield with the proper size
@@ -87,7 +91,7 @@ size_t PeerProcess::getNumPieces() const {
 
 void PeerProcess::fileHandlinitInit() {
     using std::filesystem::exists;
-    fileHandler = new FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 0);
+    fileHandler = FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 0);
     fileHandler.init();
 }
 
@@ -409,7 +413,7 @@ void PeerProcess::handleNotInterested(int peerId){
 void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& payload){
     // get the index
     std::string str(payload.begin(), payload.end());
-    int index = stoi(str);
+    int index = (payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8)  | payload[3];
     // update their bitfield with the new piece
     relationships.at(peerId).theirBitfield.setPiece(index);
 
@@ -439,10 +443,14 @@ void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& pa
     if(!relationships.at(peerId).chokedThem){
         //get the index
         std::string str(payload.begin(), payload.begin() + 4);
-        int index = stoi(str);
+        int index = (payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8)  | payload[3];
 
+        std::vector<char> data;
         // get data for the piece
-        std::vector<char> data = fileHandler.readPiece(index);
+        if(fileHandler.readPiece(index).has_value()){
+            for(uint8_t byte : *fileHandler.readPiece(index))
+             data.push_back(static_cast<char>(byte));
+        }
 
         // send the piece to the peer
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
@@ -453,13 +461,16 @@ void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& pa
 void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payload){
     //get the index
     std::string str(payload.begin(), payload.begin() + 4);
-    int index = stoi(str);
+    int index = (payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8)  | payload[3];
+    std::vector<unsigned char> pieceData(payload.begin() + 4, payload.end());
 
     // write the data to out file
-    fileHandler.writePiece(index, payload, payload.size());
-
+    fileHandler.writePiece(index, &pieceData[0], pieceData.size());
     // update bitfield
     bitfield.setPiece(index);
+    // update the amount of bytes downlaoded from this peer
+    std::lock_guard<std::mutex> lk(peersMutex);
+    relationships.at(peerId).bytesDownloaded += payload.size()-4;
 
     // send to all peers that we have the piece now
     for (auto& [id, pr] : relationships) {
@@ -479,5 +490,166 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
 
         // if we now have all the pieces
         // use FileHandling::finalize()
+}
+
+// Start the preferred-neighbor scheduler
+void PeerProcess::startPreferredNeighborScheduler() {
+    preferredNeighborThread = std::thread([this]() {
+        std::random_device rd;
+        std::mt19937 rng(rd());
+
+        const int k = common.numberOfPreferredNeighbors;
+        const int interval = common.unchokingInterval;
+
+        while (!schedulerStop.load()) {
+            // Sleep with small granularity to honor stop signal
+            for (int i = 0; i < interval && !schedulerStop.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (schedulerStop.load()) break;
+
+            std::vector<std::pair<int,double>> candidateRates; // peerId -> rate
+            {
+                std::lock_guard<std::mutex> lk(peersMutex);
+                for (auto &peer : relationships) {
+                    int pid = peer.first;
+                    if (!peer.second.interestedInMe){
+                        continue;
+                    }
+                    uint64_t delta = peer.second.bytesDownloaded - peer.second.lastDownloaded;
+                    double rate = static_cast<double>(delta) / std::max(1, interval);
+                    candidateRates.emplace_back(pid, rate);
+                }
+            }
+
+            // Determine if we are seeder (have complete file)
+            bool amSeeder = bitfield.isComplete();
+
+            std::vector<int> selected; selected.reserve(k);
+
+            if (amSeeder) {
+                // choose k randomly among interested peers
+                std::vector<int> ids;
+                ids.reserve(candidateRates.size());
+                for (auto &pr : candidateRates){
+                    ids.push_back(pr.first);
+                }
+                if (!ids.empty()) {
+                    std::shuffle(ids.begin(), ids.end(), rng);
+                    for (size_t i = 0; i < ids.size() && (int)selected.size() < k; ++i) {
+                        selected.push_back(ids[i]);
+                    }
+                }
+            }
+            else {
+                // break ties randomly: shuffle then stable_sort by rate desc
+                std::shuffle(candidateRates.begin(), candidateRates.end(), rng);
+                std::stable_sort(candidateRates.begin(), candidateRates.end(),
+                                 [](const auto &a, const auto &b){ return a.second > b.second; });
+                for (size_t i = 0; i < candidateRates.size() && (int)selected.size() < k; ++i)
+                    selected.push_back(candidateRates[i].first);
+            }
+
+            // convert to lookup
+            std::unordered_set<int> selectedSet(selected.begin(), selected.end());
+            int currentOptimistic = optimisticUnchokedPeer.load();
+
+            // Now apply choke/unchoke decisions
+            {
+                std::lock_guard<std::mutex> lk(peersMutex);
+
+                for (auto &peer : relationships) {
+                    int pid = peer.first;
+                    bool shouldBeUnchoked = (selectedSet.count(pid) || pid == currentOptimistic);
+                    if (shouldBeUnchoked) {
+                        if (peer.second.chokedThem) {
+                            // send UNCHOKE
+                            SOCKET s = peer.second.theirSocket;
+                            if (s != INVALID_SOCKET){
+                                MessageSender sender(pid, s);
+                                sender.sendUnchoke();
+                            }
+                            peer.second.chokedThem = false;
+                        }
+                    }
+                    else {
+                        if (!peer.second.chokedThem) {
+                            // Only choke if not the optimistic peer (we excluded it) -> safe
+                            SOCKET s = peer.second.theirSocket;
+                            if (s != INVALID_SOCKET){
+                                MessageSender sender(pid, s);
+                                sender.sendChoke();
+                            }
+                            peer.second.chokedThem = true;
+                        }
+                    }
+
+                    // update snapshot for next interval
+                    peer.second.lastDownloaded = peer.second.bytesDownloaded;
+                }
+            }
+        }
+    });
+}
+
+// Start the optimistic unchoke scheduler
+void PeerProcess::startOptimisticUnchokeScheduler() {
+    optimisticUnchokeThread = std::thread([this]() {
+        std::random_device rd;
+        std::mt19937 rng(rd());
+
+        const int interval = common.optimisticUnchokingInterval;
+
+        while (!schedulerStop.load()) {
+            for (int i = 0; i < interval && !schedulerStop.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (schedulerStop.load()) break;
+
+            // gather candidates: choked by me AND interested in me
+            std::vector<int> candidates;
+            {
+                std::lock_guard<std::mutex> lk(peersMutex);
+                for (auto &peer: relationships) {
+                    int pid = peer.first;
+                    if (peer.second.interestedInMe && peer.second.chokedThem) candidates.push_back(pid);
+                }
+            }
+
+            if (candidates.empty()) {
+                continue;
+            }
+
+            std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
+            int chosen = candidates[dist(rng)];
+            int prev = optimisticUnchokedPeer.exchange(chosen);
+
+            {
+                std::lock_guard<std::mutex> lk(peersMutex);
+                // Unchoke the new optimistic peer (if currently choked)
+                if (relationships.at(chosen).chokedThem) {
+                    SOCKET s = relationships.at(chosen).theirSocket;
+                    if (s != INVALID_SOCKET) {
+                        MessageSender sender(chosen, s);
+                        sender.sendUnchoke();
+                    }
+                    relationships.at(chosen).chokedThem = false;
+                }
+
+                // Re-choke previous optimistic peer if it's not a preferred neighbor
+                if (prev != -1 && prev != chosen) {
+                    // If prev is not in preferred list, choke them.
+                    // We don't have direct access to the preferred list here;
+                    // preferred scheduler runs shortly and will re-unchoke any preferred ones.
+                    if (!relationships.at(prev).chokedThem) {
+                        SOCKET s = relationships.at(prev).theirSocket;
+                        if (s != INVALID_SOCKET) {
+                            MessageSender sender(prev, s);
+                            sender.sendChoke();
+                        }
+                        relationships.at(prev).chokedThem = true;
+                    }
+                }
+            }
+        }
+    });
 }
 
