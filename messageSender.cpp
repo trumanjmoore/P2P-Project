@@ -7,15 +7,16 @@ void MessageSender::sendRaw(const std::vector<char>& data)
 
     while (totalSent < dataSize)
     {
-        ssize_t bytesSent = write(socket, data.data() + totalSent, dataSize - totalSent);
-        if (bytesSent == -1)
+        ssize_t bytesSent = send(socket, data.data() + totalSent, dataSize - totalSent, 0);
+        if (bytesSent == SOCKET_ERROR)
         {
             // some sort of issue while sending
+	    std::cerr << "Peer " << peerID << " sendRaw error" << std::endl;
             return;
         }
         // casting to just avoid warning
         // but i think this shouldn't need a cast(?)
-        totalSent += static_cast<size_t>(bytesSent);
+        totalSent += bytesSent;
     }
 }
 

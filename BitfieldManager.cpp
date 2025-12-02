@@ -50,6 +50,12 @@ BitfieldManager BitfieldManager::toBits(const std::vector<uint8_t>& bytes, size_
         size_t byteIndex = i / 8;
         size_t bitIndex = 7 - (i % 8);
         bitfield.bits[i] = (bytes[byteIndex] >> bitIndex) & 1;
+
+	if (byteIndex < bytes.size()) {
+            bitfield.bits[i] = (bytes[byteIndex] >> bitIndex) & 1;
+        } else {
+            bitfield.bits[i] = false; // extra bits are just 0
+        }
     }
     return bitfield;
 }

@@ -1,5 +1,8 @@
 #include "FileHandling.h"
 #include <fstream>
+#include <iostream>  // For std::cerr
+#include <thread>    // For std::this_thread::sleep_for
+#include <chrono>    // For std::chrono::milliseconds
 
 using std::filesystem::exists;
 using std::filesystem::create_directories;
@@ -82,12 +85,29 @@ std::optional<std::vector<uint8_t>> FileHandling::readPiece(uint32_t index) cons
     return out;
     }
 
-bool FileHandling::finalize(){
+bool FileHandling::finalize() {
     if (hasCompleteFile()) return true;
-    try { 
-        rename(partPath_, finalPath_); return true; 
+
+    // a lot of this might be unecessary
+    // another fix is what actually fixed the finalizing issue
+    // but i don't want to deal with reverting and maybe messing things up
+    for (int i = 0; i < 5; ++i) {
+        try {
+            std::filesystem::rename(partPath_, finalPath_);
+            return true;
+        } 
+        catch (const std::filesystem::filesystem_error& e) {
+            // if this is the last attempt, log the failure
+            if (i == 4) {
+                std::cerr << "Finalize failed: " << e.what() << std::endl;
+                std::cerr << "Source: " << partPath_ << "\nDest: " << finalPath_ << std::endl;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50 * (i + 1)));
+        }
+        catch (...) {
+            std::cerr << "Unknown error occurred during finalize." << std::endl;
+            return false;
+        }
     }
-    catch (...) { 
-        return false; 
-    }
+    return false;
 }
