@@ -20,8 +20,8 @@ void PeerProcess::start() {
     connectToEarlierPeers();
 
     // choose new neighbors
-    startPreferredNeighborScheduler();
-    startOptimisticUnchokeScheduler();
+    startPreferredNeighbor();
+    startOptimisticUnchoke();
 }
 // read the Common.cfg file and place the information in the common strut
 void PeerProcess::readCommon() {
@@ -492,8 +492,8 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
         // use FileHandling::finalize()
 }
 
-// Start the preferred-neighbor scheduler
-void PeerProcess::startPreferredNeighborScheduler() {
+// choosing preffered neighbors
+void PeerProcess::startPreferredNeighbor() {
     preferredNeighborThread = std::thread([this]() {
         std::random_device rd;
         std::mt19937 rng(rd());
@@ -502,7 +502,7 @@ void PeerProcess::startPreferredNeighborScheduler() {
         const int interval = common.unchokingInterval;
 
         while (!schedulerStop.load()) {
-            // Sleep with small granularity to honor stop signal
+            // wait for p seconds
             for (int i = 0; i < interval && !schedulerStop.load(); ++i)
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             if (schedulerStop.load()) break;
@@ -521,13 +521,12 @@ void PeerProcess::startPreferredNeighborScheduler() {
                 }
             }
 
-            // Determine if we are seeder (have complete file)
+            // if we are a seeder i.e have the whole file, randomly choose peers
             bool amSeeder = bitfield.isComplete();
 
             std::vector<int> selected; selected.reserve(k);
 
             if (amSeeder) {
-                // choose k randomly among interested peers
                 std::vector<int> ids;
                 ids.reserve(candidateRates.size());
                 for (auto &pr : candidateRates){
@@ -541,7 +540,7 @@ void PeerProcess::startPreferredNeighborScheduler() {
                 }
             }
             else {
-                // break ties randomly: shuffle then stable_sort by rate desc
+                // break ties randomly
                 std::shuffle(candidateRates.begin(), candidateRates.end(), rng);
                 std::stable_sort(candidateRates.begin(), candidateRates.end(),
                                  [](const auto &a, const auto &b){ return a.second > b.second; });
@@ -549,11 +548,11 @@ void PeerProcess::startPreferredNeighborScheduler() {
                     selected.push_back(candidateRates[i].first);
             }
 
-            // convert to lookup
+            // make lookup table
             std::unordered_set<int> selectedSet(selected.begin(), selected.end());
             int currentOptimistic = optimisticUnchokedPeer.load();
 
-            // Now apply choke/unchoke decisions
+            // decide if we should choke or unchoke
             {
                 std::lock_guard<std::mutex> lk(peersMutex);
 
@@ -562,7 +561,6 @@ void PeerProcess::startPreferredNeighborScheduler() {
                     bool shouldBeUnchoked = (selectedSet.count(pid) || pid == currentOptimistic);
                     if (shouldBeUnchoked) {
                         if (peer.second.chokedThem) {
-                            // send UNCHOKE
                             SOCKET s = peer.second.theirSocket;
                             if (s != INVALID_SOCKET){
                                 MessageSender sender(pid, s);
@@ -573,7 +571,6 @@ void PeerProcess::startPreferredNeighborScheduler() {
                     }
                     else {
                         if (!peer.second.chokedThem) {
-                            // Only choke if not the optimistic peer (we excluded it) -> safe
                             SOCKET s = peer.second.theirSocket;
                             if (s != INVALID_SOCKET){
                                 MessageSender sender(pid, s);
@@ -591,8 +588,8 @@ void PeerProcess::startPreferredNeighborScheduler() {
     });
 }
 
-// Start the optimistic unchoke scheduler
-void PeerProcess::startOptimisticUnchokeScheduler() {
+// choosing who to optimisticly unchoke
+void PeerProcess::startOptimisticUnchoke() {
     optimisticUnchokeThread = std::thread([this]() {
         std::random_device rd;
         std::mt19937 rng(rd());
@@ -604,7 +601,7 @@ void PeerProcess::startOptimisticUnchokeScheduler() {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             if (schedulerStop.load()) break;
 
-            // gather candidates: choked by me AND interested in me
+            // candidates must be choked by us and interested in us
             std::vector<int> candidates;
             {
                 std::lock_guard<std::mutex> lk(peersMutex);
@@ -624,7 +621,7 @@ void PeerProcess::startOptimisticUnchokeScheduler() {
 
             {
                 std::lock_guard<std::mutex> lk(peersMutex);
-                // Unchoke the new optimistic peer (if currently choked)
+                // unchoke the optimistic peer only if they are choked
                 if (relationships.at(chosen).chokedThem) {
                     SOCKET s = relationships.at(chosen).theirSocket;
                     if (s != INVALID_SOCKET) {
@@ -634,11 +631,8 @@ void PeerProcess::startOptimisticUnchokeScheduler() {
                     relationships.at(chosen).chokedThem = false;
                 }
 
-                // Re-choke previous optimistic peer if it's not a preferred neighbor
+                // choke previous optimistic peer
                 if (prev != -1 && prev != chosen) {
-                    // If prev is not in preferred list, choke them.
-                    // We don't have direct access to the preferred list here;
-                    // preferred scheduler runs shortly and will re-unchoke any preferred ones.
                     if (!relationships.at(prev).chokedThem) {
                         SOCKET s = relationships.at(prev).theirSocket;
                         if (s != INVALID_SOCKET) {

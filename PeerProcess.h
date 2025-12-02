@@ -98,8 +98,8 @@ private:
     std::mutex schedulerMutex;
 
 // Functions to start/stop schedulers
-    void startPreferredNeighborScheduler();
-    void startOptimisticUnchokeScheduler();
+    void startPreferredNeighbor();
+    void startOptimisticUnchoke();
     void stopSchedulers(); // call on shutdown
 
 // helper to record bytes downloaded from a peer (call inside handlePiece)
