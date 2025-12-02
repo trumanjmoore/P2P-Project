@@ -11,4 +11,5 @@ int main(int argc, char* argv[]) {
     int myPeerId = std::stoi(argv[2]);
     PeerProcess mainPeer(myPeerId);
     mainPeer.start();
+    while(true);
 }

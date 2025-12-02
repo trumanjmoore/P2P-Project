@@ -104,10 +104,17 @@ void PeerProcess::startListen() {
     std::thread listenerThread([this]() {
 
         // initialize the winsock
-        static WSADATA wsaData;
-        int wsaerr = WSAStartup(MAKEWORD(2, 0), &wsaData);
-        if (wsaerr)
-            exit(1);
+        try {
+            static WSADATA wsaData;
+            int wsaerr = WSAStartup(MAKEWORD(2, 0), &wsaData);
+            if (wsaerr)
+                exit(1);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Exception in listener thread: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown exception in listener thread" << std::endl;
+        }
 
         // initialize the server socket
         SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
