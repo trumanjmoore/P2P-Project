@@ -26,6 +26,8 @@ void Logger::writeLog(const std::string& message)
     }
 }
 
+Logger::Logger() {};
+
 Logger::Logger(int peerID) : peerID(peerID)
 {
     // if the directory doesn't exist, we create it
@@ -134,4 +136,21 @@ void Logger::logDownloadedPiece(int fromPeerID, int pieceIndex, int totalPieces)
 void Logger::logCompletedDownload()
 {
     std::string message = getTimestamp() + ": Peer " + std::to_string(peerID) + " has downloaded the complete file.";
+}
+
+void Logger::init(int newPeerID) {
+    peerID = newPeerID;
+    // if the directory doesn't exist, we create it
+    std::string dir = std::filesystem::current_path().string() + "/project";
+    std::filesystem::create_directories(dir);
+
+    // if the file doesn't exist, create it
+    // if it does exist, clear it
+    std::string filename = dir + "/log_peer_" + std::to_string(newPeerID) + ".log";
+    logFile.open(filename, std::ios::trunc);
+
+    if (!logFile.is_open())
+    {
+        std::cerr << "Unable to open log file for Peer " << newPeerID << std::endl;
+    }
 }

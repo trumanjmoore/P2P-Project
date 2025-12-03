@@ -16,6 +16,7 @@
 #include "BitfieldManager.h"
 #include "messageSender.h"
 #include "FileHandling.h"
+#include "logger.h"
 
 #pragma once
 
@@ -59,6 +60,7 @@ public:
     Common common;
     BitfieldManager bitfield;
     FileHandling fileHandler;
+    Logger logger;
 
 private:
     int ID;
@@ -73,12 +75,14 @@ private:
     void bitfieldInit();
     size_t getNumPieces() const;
     void fileHandlinitInit();
+    void loggerInit();
 
     void startListen();
     void handleConnection(SOCKET clientSocket, bool receiver);
     void connectToEarlierPeers();
-    void connectionMessageLoop(SOCKET sock, int remotePeerId);
+    void connectionMessageLoop(SOCKET sock, int peerId);
     int getPieceToRequest(int peerId);
+    void initShutdown(int peerId);
 
     void handleChoke(int peerId);
     void handleUnchoke(int peerId);
@@ -98,14 +102,11 @@ private:
     std::condition_variable_any schedulerCv;
     std::mutex schedulerMutex;
 
-// Functions to start/stop schedulers
-    void startPreferredNeighbor();
+    // algorithms for choosing preferred neighbors and optimistic unchoking
+    void findPreferredNeighbor();
     void startOptimisticUnchoke();
-    void stopSchedulers(); // call on shutdown
 
-// helper to record bytes downloaded from a peer (call inside handlePiece)
-    void recordDownloadedBytes(int fromPeerId, uint64_t bytes);
-
+    // when all other peers have the complete file
     bool allPeersHave();
 };
 

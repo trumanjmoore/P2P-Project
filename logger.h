@@ -23,9 +23,11 @@ class Logger
     void writeLog(const std::string& message);
 
     public:
+    Logger();
     explicit Logger(int peerID);
     ~Logger();
 
+    void init(int newPeerID);
     void logMakeConnection(int otherPeerID);
     void logConnectedFrom(int otherPeerID);
 
