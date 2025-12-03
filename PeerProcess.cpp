@@ -463,6 +463,10 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
     // if we have the full file, and they have the full file, then we can terminate the connection
     if(bitfield.isComplete() && relationships.at(peerId).theirBitfield.isComplete()){
         initShutdown(peerId);
+        terminate--;
+        if (terminate == 0) {
+            std::exit(1);
+        }
     }
     // check to see if we need the piece and check to see if we are not already interested
     else if(!bitfield.hasPiece(index) && !relationships.at(peerId).interestedInThem){
@@ -549,6 +553,10 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
         for (auto &[id, pr]: relationships) {
             if(pr.theirBitfield.isComplete()){
                 initShutdown(id);
+                terminate--;
+                if (terminate == 0) {
+                    std::exit(1);
+                }
             }
         }
     }

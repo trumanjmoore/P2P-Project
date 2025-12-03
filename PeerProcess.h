@@ -64,6 +64,7 @@ public:
 
 private:
     int ID;
+    int terminate = 5;
     PeerInfo selfInfo;
     std::vector<PeerInfo> allPeers;
     std::vector<PeerInfo> neighborPeers;
