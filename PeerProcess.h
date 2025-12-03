@@ -80,8 +80,9 @@ private:
     void startListen();
     void handleConnection(SOCKET clientSocket, bool receiver);
     void connectToEarlierPeers();
-    void connectionMessageLoop(SOCKET sock, int remotePeerId);
+    void connectionMessageLoop(SOCKET sock, int peerId);
     int getPieceToRequest(int peerId);
+    void initShutdown(int peerId);
 
     void handleChoke(int peerId);
     void handleUnchoke(int peerId);
