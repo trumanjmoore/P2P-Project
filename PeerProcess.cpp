@@ -51,6 +51,15 @@ void PeerProcess::readCommon() {
             common.pieceSize = std::stoi(value);
     }
 
+	std::cout << "[RUBRIC 1a] Peer " << ID
+              << " read Common.cfg: NumberOfPreferredNeighbors=" << common.numberOfPreferredNeighbors
+              << ", UnchokingInterval=" << common.unchokingInterval
+              << ", OptimisticUnchokingInterval=" << common.optimisticUnchokingInterval
+              << ", FileName=" << common.fileName
+              << ", FileSize=" << common.fileSize
+              << ", PieceSize=" << common.pieceSize
+              << std::endl;
+
     commonFile.close();
 }
 
@@ -79,6 +88,16 @@ void PeerProcess::readPeerInfo() {
             stream >> peer.has;
             allPeers.push_back(peer);
         }
+		if (id == ID) {
+			// existing assignments...
+			std::cout << "[RUBRIC 1a] Peer " << ID << " set selfInfo: host=" << selfInfo.hostName
+					  << ", port=" << selfInfo.port << ", hasFile=" << selfInfo.has << std::endl;
+		} else {
+			// existing allPeers push_back...
+			std::cout << "[RUBRIC 1a] Peer " << ID << " discovered peer: id=" << peer.peerId
+					  << ", host=" << peer.hostName << ", port=" << peer.port
+					  << ", hasFile=" << peer.has << std::endl;
+		}
     }
     peerInfoFile.close();
 }
@@ -159,7 +178,7 @@ void PeerProcess::startListen() {
         }
 
         // socket is successfully listening for other peers
-        std::cout << "Peer " << ID << " now listening from port " << selfInfo.port << std::endl;
+        std::cout << "[RUBRIC 1b] Peer " << ID << " now listening on port " << selfInfo.port << std::endl;
 
         // listening loop
         while(true) {
@@ -208,10 +227,11 @@ void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
     int otherPeerId;
     memcpy(&otherPeerId, handshake + 28, 4);
     otherPeerId = ntohl(otherPeerId);
-    std::cout << "Peer " << ID << " received valid handshake from peer "<< otherPeerId << std::endl;
+    std::cout << "[RUBRIC 2a] Peer " << ID << " received valid handshake from peer " << otherPeerId << std::endl;
 
     // if didnt send first handshake, send handshake second
     if(receiver) {
+		std::cout << "[RUBRIC 2a] Peer " << ID << " sent handshake to peer " << otherPeerId << std::endl;
         MessageSender sender(ID, clientSocket);
         sender.sendHandshake();
         logger.logConnectedFrom(otherPeerId);
@@ -223,6 +243,8 @@ void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
     // after connecting and verifying handshake, send bitfield
     MessageSender bitfieldSender(ID, clientSocket);
     bitfieldSender.sendBitfield(bitfield.getBits());
+	std::cout << "[RUBRIC 2b] Peer " << ID << " SENT BITFIELD to peer " << otherPeerId
+          << " (has " << (bitfield.isComplete() ? "all pieces" : "partial pieces") << ")" << std::endl;
 
     // null bitfield as placeholder till their bitfield is recieved, if its not then they have nothing anyway
     BitfieldManager nullBitfield(bitfield.getSize(), false);
@@ -271,6 +293,8 @@ void PeerProcess::connectToEarlierPeers() {
             continue;
         }
         freeaddrinfo(result);
+		std::cout << "[RUBRIC 1b] Peer " << ID << " successfully connected to peer " << peer.peerId
+                  << " (" << peer.hostName << ":" << peer.port << ")" << std::endl;
 
 
         // send handshake message before handling connection
@@ -351,6 +375,8 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int peerId){
             // bitfield
             case 5:
                 std::cout << "Peer " << ID << " received BITFIELD from " << peerId << std::endl;
+				std::cout << "[RUBRIC 2b] Peer " << ID << " RECEIVED BITFIELD from peer " << peerId
+          << ". Interested=" << (relationships.at(peerId).interestedInThem ? "YES" : "NO") << std::endl;
                 handleBitfield(peerId, payload);
                 break;
 
@@ -435,7 +461,7 @@ void PeerProcess::handleUnchoke(int peerId){
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
         sender.sendRequest( piece);
         requests[piece] = peerId;
-        std::cout << "Peer " << ID << " requested piece " << piece << " from peer " << peerId << std::endl;
+        std::cout << "[RUBRIC 3a] Peer " << ID << " requested piece " << piece << " from peer " << peerId << std::endl;
     }
 }
 
@@ -462,15 +488,23 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
 
     // if we have the full file, and they have the full file, then we can terminate the connection
     if(bitfield.isComplete() && relationships.at(peerId).theirBitfield.isComplete()){
+		std::cout << "[RUBRIC 3f] Peer " << ID << " processed HAVE from peer " << peerId
+          << " for piece " << index << ". Local have=" << (bitfield.hasPiece(index) ? "YES" : "NO")
+          << std::endl;
         initShutdown(peerId);
         terminate--;
         if (terminate == 0) {
+			if (terminate == 0) {
+			    std::cout << "[RUBRIC 1c][RUBRIC 4] Peer " << ID << " observed all peers have completed the file. Shutting down cleanly." << std::endl;
+			    std::exit(0);
+			}
             std::exit(1);
         }
     }
     // check to see if we need the piece and check to see if we are not already interested
     else if(!bitfield.hasPiece(index) && !relationships.at(peerId).interestedInThem){
         relationships.at(peerId).interestedInThem = true;
+		std::cout << "[RUBRIC 3d] Peer " << ID << " SENT INTERESTED to peer " << peerId << " for piece " << index << std::endl;
         // send that we are interested
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
         sender.sendInterested();
@@ -509,6 +543,9 @@ void PeerProcess::handleRequest(int peerId, const std::vector<unsigned char>& pa
 
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
         sender.sendPiece(index, data);
+		std::cout << "[RUBRIC 3e] Peer " << ID << " SENT PIECE " << index << " to peer " << peerId
+          << " (size=" << data.size() << " bytes)" << std::endl;
+
     }
 }
 
@@ -525,7 +562,7 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
         std::lock_guard<std::mutex> lock(peersMutex);
         relationships.at(peerId).bytesDownloaded += pieceData.size(); 
     }
-
+	
     int receivedCount = 0;
     for(size_t i = 0; i < bitfield.getSize(); i++){
         if(bitfield.hasPiece(i)) receivedCount++;
@@ -534,10 +571,15 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
 
     logger.logDownloadedPiece(peerId, index, receivedCount);
 
+	    // BEFORE broadcasting HAVE
+    std::cout << "[RUBRIC 3b] Peer " << ID << " stored piece " << index
+              << " and will BROADCAST HAVE to other peers" << std::endl;
+
     for (auto& [id, pr] : relationships) {
         MessageSender sender(pr.theirID, pr.theirSocket);
         sender.sendHave(index);
     }
+	std::cout << "[RUBRIC 3b] Peer " << ID << " BROADCASTED HAVE for piece " << index << std::endl;
 
     if (bitfield.isComplete()) {
         std::cout << "Peer " << ID << " has downloaded the complete file!" << std::endl;
@@ -639,32 +681,38 @@ void PeerProcess::findPreferredNeighbor() {
                     int pid = peer.first;
                     bool shouldBeUnchoked = (selectedSet.count(pid));
                     if (shouldBeUnchoked) {
-                        if (peer.second.chokedThem) {
-                            SOCKET theirSocket = peer.second.theirSocket;
-                            if (theirSocket != INVALID_SOCKET){
-                                MessageSender sender(pid, theirSocket);
-                                sender.sendUnchoke();
-                            }
-                            peer.second.chokedThem = false;
-                        }
-                        preferredNeighbors.push_back(pid);
-                    }
-                    else {
-                        if (!peer.second.chokedThem) {
-                            SOCKET theirSocket = peer.second.theirSocket;
-                            if (theirSocket != INVALID_SOCKET){
-                                MessageSender sender(pid, theirSocket);
-                                sender.sendChoke();
-                            }
-                            peer.second.chokedThem = true;
-                        }
-                    }
+					    if (peer.second.chokedThem) {
+					        SOCKET theirSocket = peer.second.theirSocket;
+					        if (theirSocket != INVALID_SOCKET){
+					            MessageSender sender(pid, theirSocket);
+					            sender.sendUnchoke();
+					        }
+					        peer.second.chokedThem = false;
+					        std::cout << "[RUBRIC 2d] Peer " << ID << " SENT UNCHOKE to " << pid << std::endl;
+					    }
+					    preferredNeighbors.push_back(pid);
+					}
+					else {
+					    if (!peer.second.chokedThem) {
+					        SOCKET theirSocket = peer.second.theirSocket;
+					        if (theirSocket != INVALID_SOCKET){
+					            MessageSender sender(pid, theirSocket);
+					            sender.sendChoke();
+					        }
+					        peer.second.chokedThem = true;
+					        std::cout << "[RUBRIC 2d] Peer " << ID << " SENT CHOKE to " << pid << std::endl;
+					    }
+					}
 
                     // update snapshot for next interval
                     peer.second.lastDownloaded = peer.second.bytesDownloaded;
                 }
                 if(!preferredNeighbors.empty()){
                     logger.logChangePreferredNeighbors(preferredNeighbors);
+					std::cout << "[RUBRIC 2d] Peer " << ID << " preferredNeighbors set: ";
+					for (int pid : preferredNeighbors) std::cout << pid << " ";
+					std::cout << std::endl;
+
                 }
             }
         }
@@ -708,6 +756,7 @@ void PeerProcess::startOptimisticUnchoke() {
                 if (relationships.at(chosen).chokedThem) {
                     SOCKET theirSocket = relationships.at(chosen).theirSocket;
                     if (theirSocket != INVALID_SOCKET) {
+						std::cout << "[RUBRIC 2e] Peer " << ID << " optimistically UNCHOKED peer " << chosen << std::endl;
                         MessageSender sender(chosen, theirSocket);
                         sender.sendUnchoke();
                     }
@@ -721,6 +770,7 @@ void PeerProcess::startOptimisticUnchoke() {
                     if (!relationships.at(prev).chokedThem) {
                         SOCKET theirSocket = relationships.at(prev).theirSocket;
                         if (theirSocket != INVALID_SOCKET) {
+							std::cout << "[RUBRIC 2e] Peer " << ID << " removed optimistic UNCHOKE from peer " << prev << std::endl;
                             MessageSender sender(prev, theirSocket);
                             sender.sendChoke();
                         }
@@ -731,4 +781,5 @@ void PeerProcess::startOptimisticUnchoke() {
         }
     });
 }
+
 
