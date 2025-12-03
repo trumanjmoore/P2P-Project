@@ -6,3 +6,5 @@ Ryan Goodman - Worked on sending messages between peers, logging activity, and d
 Truman Moore -
 
 Ernesto Perez -
+
+Video Link: 
