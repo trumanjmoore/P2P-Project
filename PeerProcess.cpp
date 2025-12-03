@@ -14,13 +14,14 @@ void PeerProcess::start() {
     readPeerInfo();
     bitfieldInit();
     fileHandlinitInit();
+    loggerInit();
 
     // start peer processes
     startListen();
     connectToEarlierPeers();
 
     // choose new neighbors
-    startPreferredNeighbor();
+    findPreferredNeighbor();
     startOptimisticUnchoke();
 }
 // read the Common.cfg file and place the information in the common strut
@@ -96,6 +97,10 @@ void PeerProcess::fileHandlinitInit() {
     using std::filesystem::exists;
     fileHandler = FileHandling(std::filesystem::path("."), ID, common.fileName, common.fileSize, common.pieceSize, selfInfo.has == 1);
     fileHandler.init();
+}
+
+void PeerProcess::loggerInit() {
+    logger.init(ID);
 }
 
 // start listening for connections from other peers
@@ -205,6 +210,10 @@ void PeerProcess::handleConnection(SOCKET clientSocket, bool receiver=true){
     if(receiver) {
         MessageSender sender(ID, clientSocket);
         sender.sendHandshake();
+        logger.logConnectedFrom(otherPeerId);
+    }
+    else{
+        logger.logMakeConnection(otherPeerId);
     }
 
     // after connecting and verifying handshake, send bitfield
@@ -261,7 +270,7 @@ void PeerProcess::connectToEarlierPeers() {
             continue;
         }
         freeaddrinfo(result);
-        std::cout << "Peer " << ID << " connected to Peer " << peer.peerId << std::endl;
+
 
         // send handshake message before handling connection
         // this is because this process is the one initiating the connection
@@ -323,7 +332,6 @@ void PeerProcess::connectionMessageLoop(SOCKET sock, int remotePeerId){
             case 1:
                 std::cout << "Peer " << ID << " received UNCHOKE from " << remotePeerId << std::endl;
                 handleUnchoke(remotePeerId);
-		std::cout << "test" << std::endl;
                 break;
 
             // interested
@@ -397,10 +405,14 @@ int PeerProcess::getPieceToRequest(int peerId) {
 
 void PeerProcess::handleChoke(int peerId){
     relationships.at(peerId).chokedMe = true;
+
+    logger.logChokedBy(peerId);
 }
 
 void PeerProcess::handleUnchoke(int peerId){
     relationships.at(peerId).chokedMe = false;
+
+    logger.logUnchokedBy(peerId);
 
     // get the next missing piece
     int piece = getPieceToRequest(peerId);
@@ -416,10 +428,14 @@ void PeerProcess::handleUnchoke(int peerId){
 
 void PeerProcess::handleInterested(int peerId){
     relationships.at(peerId).interestedInMe = true;
+
+    logger.logReceivedInterested(peerId);
 }
 
 void PeerProcess::handleNotInterested(int peerId){
     relationships.at(peerId).interestedInMe = false;
+
+    logger.logReceivedNotInterested(peerId);
 }
 
 void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& payload){
@@ -428,6 +444,8 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
     int index = (payload[0] << 24) | (payload[1] << 16) | (payload[2] << 8)  | payload[3];
     // update their bitfield with the new piece
     relationships.at(peerId).theirBitfield.setPiece(index);
+
+    logger.logReceivedHave(peerId, index);
 
     // check to see if we need the piece and check to see if we are not already interested
     if(!bitfield.hasPiece(index) && !relationships.at(peerId).interestedInThem){
@@ -440,6 +458,7 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
 
 void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& payload){
     relationships.at(peerId).theirBitfield = BitfieldManager::toBits(payload, getNumPieces());
+
     // check to see if we should be interested i.e. if they have a piece that we do not
     bool interested = bitfield.compareBitfields(relationships.at(peerId).theirBitfield);
     if(interested && !relationships.at(peerId).interestedInThem){
@@ -478,8 +497,8 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
     std::vector<unsigned char> pieceData(payload.begin() + 4, payload.end());
 
     fileHandler.writePiece(index, &pieceData[0], pieceData.size());
-    
     bitfield.setPiece(index);
+    requests.clear();
 
     {
         std::lock_guard<std::mutex> lk(peersMutex);
@@ -492,6 +511,13 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
     }
     std::cout << "Peer " << ID << " progress: " << receivedCount << "/" << bitfield.getSize() << " pieces." << std::endl;
 
+    logger.logDownloadedPiece(peerId, index, receivedCount);
+
+    for (auto& [id, pr] : relationships) {
+        MessageSender sender(pr.theirID, pr.theirSocket);
+        sender.sendHave(index);
+    }
+
     if (bitfield.isComplete()) {
         std::cout << "Peer " << ID << " has downloaded the complete file!" << std::endl;
         
@@ -500,24 +526,22 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
         } else {
             std::cerr << "Failed to finalize file." << std::endl;
         }
-    }
-    
-    for (auto& [id, pr] : relationships) {
-        MessageSender sender(pr.theirID, pr.theirSocket);
-        sender.sendHave(index);
+
+        logger.logCompletedDownload();
     }
 
-    int nextPiece = getPieceToRequest(peerId);
-
-    if (nextPiece >= 0 && !relationships.at(peerId).chokedMe) {
-        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
-        sender.sendRequest(nextPiece);
-        requests[nextPiece] = peerId;
+    else{
+        int nextPiece = getPieceToRequest(peerId);
+        if (nextPiece >= 0 && !relationships.at(peerId).chokedMe) {
+            MessageSender sender(peerId, relationships.at(peerId).theirSocket);
+            sender.sendRequest(nextPiece);
+            requests[nextPiece] = peerId;
+        }
     }
 }
 
 // choosing preffered neighbors
-void PeerProcess::startPreferredNeighbor() {
+void PeerProcess::findPreferredNeighbor() {
     preferredNeighborThread = std::thread([this]() {
         std::random_device rd;
         std::mt19937 rng(rd());
@@ -531,7 +555,7 @@ void PeerProcess::startPreferredNeighbor() {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             if (schedulerStop.load()) break;
 
-            std::vector<std::pair<int,double>> candidateRates; // peerId -> rate
+            std::vector<std::pair<int,double>> candidateRates;
             {
                 std::lock_guard<std::mutex> lk(peersMutex);
                 for (auto &peer : relationships) {
@@ -572,17 +596,18 @@ void PeerProcess::startPreferredNeighbor() {
                     selected.push_back(candidateRates[i].first);
             }
 
-            // make lookup table
+            // make lookup table for optimistic candidates
             std::unordered_set<int> selectedSet(selected.begin(), selected.end());
             int currentOptimistic = optimisticUnchokedPeer.load();
 
             // decide if we should choke or unchoke
             {
                 std::lock_guard<std::mutex> lk(peersMutex);
+                std::vector<int> preferredNeighbors;
 
                 for (auto &peer : relationships) {
                     int pid = peer.first;
-                    bool shouldBeUnchoked = (selectedSet.count(pid) || pid == currentOptimistic);
+                    bool shouldBeUnchoked = (selectedSet.count(pid));
                     if (shouldBeUnchoked) {
                         if (peer.second.chokedThem) {
                             SOCKET s = peer.second.theirSocket;
@@ -592,6 +617,7 @@ void PeerProcess::startPreferredNeighbor() {
                             }
                             peer.second.chokedThem = false;
                         }
+                        preferredNeighbors.push_back(pid);
                     }
                     else {
                         if (!peer.second.chokedThem) {
@@ -606,6 +632,9 @@ void PeerProcess::startPreferredNeighbor() {
 
                     // update snapshot for next interval
                     peer.second.lastDownloaded = peer.second.bytesDownloaded;
+                }
+                if(!preferredNeighbors.empty()){
+                    logger.logChangePreferredNeighbors(preferredNeighbors);
                 }
             }
         }
@@ -653,6 +682,8 @@ void PeerProcess::startOptimisticUnchoke() {
                         sender.sendUnchoke();
                     }
                     relationships.at(chosen).chokedThem = false;
+
+                    logger.logChangeOptimisticUnchoke(chosen);
                 }
 
                 // choke previous optimistic peer
