@@ -87,17 +87,17 @@ void PeerProcess::readPeerInfo() {
             stream >> peer.port;
             stream >> peer.has;
             allPeers.push_back(peer);
+            if (id == ID) {
+                // existing assignments...
+                std::cout << "[RUBRIC 1a] Peer " << ID << " set selfInfo: host=" << selfInfo.hostName
+                          << ", port=" << selfInfo.port << ", hasFile=" << selfInfo.has << std::endl;
+            } else {
+                // existing allPeers push_back...
+                std::cout << "[RUBRIC 1a] Peer " << ID << " discovered peer: id=" << peer.peerId
+                          << ", host=" << peer.hostName << ", port=" << peer.port
+                          << ", hasFile=" << peer.has << std::endl;
+            }
         }
-		if (id == ID) {
-			// existing assignments...
-			std::cout << "[RUBRIC 1a] Peer " << ID << " set selfInfo: host=" << selfInfo.hostName
-					  << ", port=" << selfInfo.port << ", hasFile=" << selfInfo.has << std::endl;
-		} else {
-			// existing allPeers push_back...
-			std::cout << "[RUBRIC 1a] Peer " << ID << " discovered peer: id=" << peer.peerId
-					  << ", host=" << peer.hostName << ", port=" << peer.port
-					  << ", hasFile=" << peer.has << std::endl;
-		}
     }
     peerInfoFile.close();
 }
@@ -498,7 +498,6 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
 			    std::cout << "[RUBRIC 1c][RUBRIC 4] Peer " << ID << " observed all peers have completed the file. Shutting down cleanly." << std::endl;
 			    std::exit(0);
 			}
-            std::exit(1);
         }
     }
     // check to see if we need the piece and check to see if we are not already interested
@@ -508,6 +507,11 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
         // send that we are interested
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
         sender.sendInterested();
+    }\
+    // else we are not interested
+    else{
+        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
+        sender.sendNotInterested();
     }
 }
 
