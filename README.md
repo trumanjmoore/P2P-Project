@@ -7,4 +7,4 @@ Truman Moore - Worked on Peer Process class, peer termination, interpreting and 
 
 Ernesto Perez - File handling class and debugging.
 
-Video Link: 
+Video Link: https://youtu.be/Y5sUB0bkePY
