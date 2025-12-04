@@ -494,10 +494,8 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
         initShutdown(peerId);
         terminate--;
         if (terminate == 0) {
-			if (terminate == 0) {
-			    std::cout << "[RUBRIC 1c][RUBRIC 4] Peer " << ID << " observed all peers have completed the file. Shutting down cleanly." << std::endl;
-			    std::exit(0);
-			}
+			std::cout << "[RUBRIC 1c][RUBRIC 4] Peer " << ID << " observed all peers have completed the file. Shutting down cleanly." << std::endl;
+			std::exit(0);
         }
     }
     // check to see if we need the piece and check to see if we are not already interested
@@ -508,11 +506,6 @@ void PeerProcess::handleHave(int peerId, const std::vector<unsigned char>& paylo
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
         sender.sendInterested();
     }\
-    // else we are not interested
-    else{
-        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
-        sender.sendNotInterested();
-    }
 }
 
 void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& payload){
@@ -524,6 +517,11 @@ void PeerProcess::handleBitfield(int peerId, const std::vector<unsigned char>& p
         // send that we are interested
         MessageSender sender(peerId, relationships.at(peerId).theirSocket);
         sender.sendInterested();
+    }
+    // else we are not interested
+    else if (!interested){
+        MessageSender sender(peerId, relationships.at(peerId).theirSocket);
+        sender.sendNotInterested();
     }
     relationships.at(peerId).interestedInThem = interested;
 }
@@ -601,7 +599,7 @@ void PeerProcess::handlePiece(int peerId, const std::vector<unsigned char>& payl
                 initShutdown(id);
                 terminate--;
                 if (terminate == 0) {
-                    std::exit(1);
+                    std::exit(0);
                 }
             }
         }
